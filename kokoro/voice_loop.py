@@ -209,6 +209,9 @@ def main() -> int:
     pipe = KPipeline(lang_code=args.lang, model=True, device=args.device)
     for p in pipe.model.parameters():
         p.requires_grad = False
+    # KPipeline sets eval() internally; cuDNN RNN backward requires train mode.
+    # Params are frozen so train() here won't cause weight updates.
+    pipe.model.train()
 
     raw_rows = parse_manifest(args.manifest_csv)
     if not raw_rows:
