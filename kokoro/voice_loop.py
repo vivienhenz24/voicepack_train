@@ -296,6 +296,8 @@ def main() -> int:
             epoch_losses["splitnorm"] += row["splitnorm"]
 
             global_step += 1
+            if global_step % 200 == 0 and torch.cuda.is_available():
+                torch.cuda.empty_cache()
             if pos % args.log_every == 0 or pos == len(order):
                 print(
                     f"epoch={epoch}/{args.epochs} sample={pos}/{len(order)} "

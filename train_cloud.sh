@@ -117,6 +117,7 @@ echo "==> Starting voice pack training..."
 echo "    epochs=${EPOCHS}  lr=${LR}  voice_init=${VOICE_INIT}  device=${DEVICE}"
 echo "    out_dir=${OUT_DIR}"
 
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 uv run python3 kokoro/voice_loop.py \
   --manifest-csv "${MANIFEST}" \
   --lang         "${LANG}" \
