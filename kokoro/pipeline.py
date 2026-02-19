@@ -1,4 +1,5 @@
 from .model import KModel
+from .voice_probe import emit_probe, tensor_stats, voice_pack_stats
 from dataclasses import dataclass
 from huggingface_hub import hf_hub_download
 from loguru import logger
@@ -7,6 +8,7 @@ from typing import Callable, Generator, List, Optional, Tuple, Union
 import re
 import torch
 import os
+import uuid
 
 ALIASES = {
     'en-us': 'a',
@@ -16,6 +18,7 @@ ALIASES = {
     'hi': 'h',
     'it': 'i',
     'pt-br': 'p',
+    'tr': 't',
     'ja': 'j',
     'zh': 'z',
 }
@@ -31,6 +34,7 @@ LANG_CODES = dict(
     h='hi',
     i='it',
     p='pt-br',
+    t='tr',
 
     # pip install misaki[ja]
     j='Japanese',
@@ -237,9 +241,30 @@ class KPipeline:
         pack: torch.FloatTensor,
         speed: Union[float, Callable[[int], float]] = 1
     ) -> KModel.Output:
+        probe_id = uuid.uuid4().hex
         if callable(speed):
             speed = speed(len(ps))
-        return model(ps, pack[len(ps)-1], speed, return_output=True)
+        idx = max(0, min(len(ps) - 1, pack.shape[0] - 1))
+        ref_s = pack[idx]
+        emit_probe(
+            "pipeline.infer.pre",
+            probe_id=probe_id,
+            phoneme_len=len(ps),
+            pack_index=idx,
+            speed=float(speed),
+            ref_s=tensor_stats(ref_s),
+            ref_s_left=tensor_stats(ref_s[..., :128]),
+            ref_s_right=tensor_stats(ref_s[..., 128:]),
+        )
+        output = model(ps, ref_s, speed, return_output=True, probe_id=probe_id)
+        emit_probe(
+            "pipeline.infer.post",
+            probe_id=probe_id,
+            phoneme_len=len(ps),
+            audio=tensor_stats(output.audio),
+            pred_dur=tensor_stats(output.pred_dur) if output.pred_dur is not None else None,
+        )
+        return output
 
     def generate_from_tokens(
         self,
@@ -267,6 +292,13 @@ class KPipeline:
             raise ValueError('Specify a voice: pipeline.generate_from_tokens(..., voice="af_heart")')
         
         pack = self.load_voice(voice).to(model.device) if model else None
+        if pack is not None:
+            emit_probe(
+                "pipeline.generate_from_tokens.pack",
+                voice=str(voice),
+                lang_code=self.lang_code,
+                pack=voice_pack_stats(pack),
+            )
 
         # Handle raw phoneme string
         if isinstance(tokens, str):
@@ -370,6 +402,13 @@ class KPipeline:
         if model and voice is None:
             raise ValueError('Specify a voice: en_us_pipeline(text="Hello world!", voice="af_heart")')
         pack = self.load_voice(voice).to(model.device) if model else None
+        if pack is not None:
+            emit_probe(
+                "pipeline.call.pack",
+                voice=str(voice),
+                lang_code=self.lang_code,
+                pack=voice_pack_stats(pack),
+            )
         
         # Convert input to list of segments
         if isinstance(text, str):

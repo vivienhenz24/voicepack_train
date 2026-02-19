@@ -1,5 +1,6 @@
 from .istftnet import Decoder
 from .modules import CustomAlbert, ProsodyPredictor, TextEncoder
+from .voice_probe import emit_probe, tensor_stats
 from dataclasses import dataclass
 from huggingface_hub import hf_hub_download
 from loguru import logger
@@ -83,13 +84,20 @@ class KModel(torch.nn.Module):
         audio: torch.FloatTensor
         pred_dur: Optional[torch.LongTensor] = None
 
-    @torch.no_grad()
-    def forward_with_tokens(
+    def _forward_with_tokens_impl(
         self,
         input_ids: torch.LongTensor,
         ref_s: torch.FloatTensor,
-        speed: float = 1
+        speed: float = 1,
+        probe_id: Optional[str] = None,
     ) -> tuple[torch.FloatTensor, torch.LongTensor]:
+        emit_probe(
+            "model.forward_with_tokens.pre",
+            probe_id=probe_id,
+            input_ids=tensor_stats(input_ids),
+            ref_s=tensor_stats(ref_s),
+            speed=float(speed),
+        )
         input_lengths = torch.full(
             (input_ids.shape[0],), 
             input_ids.shape[-1], 
@@ -107,34 +115,120 @@ class KModel(torch.nn.Module):
         duration = self.predictor.duration_proj(x)
         duration = torch.sigmoid(duration).sum(axis=-1) / speed
         pred_dur = torch.round(duration).clamp(min=1).long().squeeze()
+        emit_probe(
+            "model.forward_with_tokens.duration",
+            probe_id=probe_id,
+            raw_duration=tensor_stats(duration),
+            pred_dur=tensor_stats(pred_dur),
+        )
         indices = torch.repeat_interleave(torch.arange(input_ids.shape[1], device=self.device), pred_dur)
         pred_aln_trg = torch.zeros((input_ids.shape[1], indices.shape[0]), device=self.device)
         pred_aln_trg[indices, torch.arange(indices.shape[0])] = 1
         pred_aln_trg = pred_aln_trg.unsqueeze(0).to(self.device)
         en = d.transpose(-1, -2) @ pred_aln_trg
         F0_pred, N_pred = self.predictor.F0Ntrain(en, s)
+        emit_probe(
+            "model.forward_with_tokens.prosody",
+            probe_id=probe_id,
+            alignment=tensor_stats(pred_aln_trg),
+            F0_pred=tensor_stats(F0_pred),
+            N_pred=tensor_stats(N_pred),
+        )
         t_en = self.text_encoder(input_ids, input_lengths, text_mask)
         asr = t_en @ pred_aln_trg
         audio = self.decoder(asr, F0_pred, N_pred, ref_s[:, :128]).squeeze()
+        emit_probe(
+            "model.forward_with_tokens.post",
+            probe_id=probe_id,
+            asr=tensor_stats(asr),
+            audio=tensor_stats(audio),
+        )
         return audio, pred_dur
+
+    @torch.no_grad()
+    def forward_with_tokens(
+        self,
+        input_ids: torch.LongTensor,
+        ref_s: torch.FloatTensor,
+        speed: float = 1,
+        probe_id: Optional[str] = None,
+    ) -> tuple[torch.FloatTensor, torch.LongTensor]:
+        return self._forward_with_tokens_impl(
+            input_ids=input_ids, ref_s=ref_s, speed=speed, probe_id=probe_id
+        )
+
+    def forward_with_tokens_trainable(
+        self,
+        input_ids: torch.LongTensor,
+        ref_s: torch.FloatTensor,
+        speed: float = 1,
+        probe_id: Optional[str] = None,
+    ) -> tuple[torch.FloatTensor, torch.LongTensor]:
+        return self._forward_with_tokens_impl(
+            input_ids=input_ids, ref_s=ref_s, speed=speed, probe_id=probe_id
+        )
 
     def forward(
         self,
         phonemes: str,
         ref_s: torch.FloatTensor,
         speed: float = 1,
-        return_output: bool = False
+        return_output: bool = False,
+        probe_id: Optional[str] = None,
     ) -> Union['KModel.Output', torch.FloatTensor]:
         input_ids = list(filter(lambda i: i is not None, map(lambda p: self.vocab.get(p), phonemes)))
         logger.debug(f"phonemes: {phonemes} -> input_ids: {input_ids}")
+        emit_probe(
+            "model.forward.pre",
+            probe_id=probe_id,
+            phoneme_len=len(phonemes),
+            token_count=len(input_ids),
+        )
         assert len(input_ids)+2 <= self.context_length, (len(input_ids)+2, self.context_length)
         input_ids = torch.LongTensor([[0, *input_ids, 0]]).to(self.device)
         ref_s = ref_s.to(self.device)
-        audio, pred_dur = self.forward_with_tokens(input_ids, ref_s, speed)
+        audio, pred_dur = self.forward_with_tokens(input_ids, ref_s, speed, probe_id=probe_id)
         audio = audio.squeeze().cpu()
         pred_dur = pred_dur.cpu() if pred_dur is not None else None
         logger.debug(f"pred_dur: {pred_dur}")
+        emit_probe(
+            "model.forward.post",
+            probe_id=probe_id,
+            audio=tensor_stats(audio),
+            pred_dur=tensor_stats(pred_dur) if pred_dur is not None else None,
+        )
         return self.Output(audio=audio, pred_dur=pred_dur) if return_output else audio
+
+    def forward_trainable(
+        self,
+        phonemes: str,
+        ref_s: torch.FloatTensor,
+        speed: float = 1,
+        return_output: bool = False,
+        probe_id: Optional[str] = None,
+    ) -> Union['KModel.Output', torch.FloatTensor]:
+        input_ids = list(filter(lambda i: i is not None, map(lambda p: self.vocab.get(p), phonemes)))
+        emit_probe(
+            "model.forward_trainable.pre",
+            probe_id=probe_id,
+            phoneme_len=len(phonemes),
+            token_count=len(input_ids),
+        )
+        assert len(input_ids)+2 <= self.context_length, (len(input_ids)+2, self.context_length)
+        input_ids = torch.LongTensor([[0, *input_ids, 0]]).to(self.device)
+        ref_s = ref_s.to(self.device)
+        audio, pred_dur = self.forward_with_tokens_trainable(input_ids, ref_s, speed, probe_id=probe_id)
+        audio = audio.squeeze()
+        emit_probe(
+            "model.forward_trainable.post",
+            probe_id=probe_id,
+            audio=tensor_stats(audio.detach().cpu()),
+            pred_dur=tensor_stats(pred_dur.detach().cpu()) if pred_dur is not None else None,
+        )
+        if return_output:
+            pred_dur_out = pred_dur if pred_dur is not None else None
+            return self.Output(audio=audio, pred_dur=pred_dur_out)
+        return audio
 
 class KModelForONNX(torch.nn.Module):
     def __init__(self, kmodel: KModel):

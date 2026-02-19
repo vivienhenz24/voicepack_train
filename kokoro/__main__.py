@@ -13,6 +13,7 @@ espeak not installed: `apt-get install espeak-ng`
 """
 
 import argparse
+import os
 import wave
 from pathlib import Path
 from typing import Generator, TYPE_CHECKING
@@ -28,6 +29,7 @@ languages = [
     "f",  # French
     "i",  # Italian
     "p",  # Brazilian Portuguese
+    "t",  # Turkish
     "j",  # Japanese
     "z",  # Mandarin Chinese
 ]
@@ -111,7 +113,22 @@ def main() -> None:
         action="store_true",
         help="Print DEBUG messages to console",
     )
+    parser.add_argument(
+        "--probe-voice-internals",
+        action="store_true",
+        help="Write extensive internal voice/model stats to JSONL",
+    )
+    parser.add_argument(
+        "--probe-file",
+        type=Path,
+        default=Path("logs/voice_probe.jsonl"),
+        help="Output JSONL path for --probe-voice-internals",
+    )
     args = parser.parse_args()
+    if args.probe_voice_internals:
+        os.environ["KOKORO_VOICE_PROBE"] = "1"
+        os.environ["KOKORO_VOICE_PROBE_PATH"] = str(args.probe_file)
+        logger.info(f"Voice probe logging enabled: {args.probe_file}")
     if args.debug:
         logger.level("DEBUG")
     logger.debug(args)
