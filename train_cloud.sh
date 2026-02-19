@@ -51,8 +51,6 @@ echo "==> uv $(uv --version)"
 cd "${REPO_DIR}"
 echo "==> Installing dependencies..."
 uv sync
-# Also grab soundfile for robust audio loading (WAV/FLAC/OGG support)
-uv pip install soundfile
 
 # ── 3. Download LJSpeech-1.1 ────────────────────────────────────────────────
 mkdir -p "${DATA_ROOT}"
@@ -103,16 +101,7 @@ else
   echo "==> Manifest already exists, skipping"
 fi
 
-# ── 5. Pre-download Kokoro model weights ─────────────────────────────────────
-echo "==> Pre-downloading Kokoro model from HuggingFace..."
-uv run python3 -c "
-from kokoro import KPipeline
-pipe = KPipeline(lang_code='${LANG}', repo_id='hexgrad/Kokoro-82M', device='cpu')
-pack = pipe.load_voice('${VOICE_INIT}')
-print(f'Model ready. Voice pack shape: {tuple(pack.shape)}')
-"
-
-# ── 6. Kick off training ─────────────────────────────────────────────────────
+# ── 5. Kick off training ─────────────────────────────────────────────────────
 echo "==> Starting voice pack training..."
 echo "    epochs=${EPOCHS}  lr=${LR}  voice_init=${VOICE_INIT}  device=${DEVICE}"
 echo "    out_dir=${OUT_DIR}"
