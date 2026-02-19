@@ -209,7 +209,6 @@ def main() -> int:
     pipe = KPipeline(lang_code=args.lang, model=True, device=args.device)
     for p in pipe.model.parameters():
         p.requires_grad = False
-    pipe.model.eval()
 
     raw_rows = parse_manifest(args.manifest_csv)
     if not raw_rows:
