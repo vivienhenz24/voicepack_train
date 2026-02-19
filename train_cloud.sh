@@ -74,30 +74,39 @@ fi
 if [ ! -f "${MANIFEST}" ]; then
   echo "==> Building manifest CSV..."
   uv run python3 - <<PYEOF
-import csv, pathlib
+import csv, pathlib, wave
 
+MAX_SECONDS = 10.0
 data_dir = pathlib.Path("${LJSPEECH_DIR}")
 out_path = pathlib.Path("${MANIFEST}")
 
+def wav_duration(path: str) -> float:
+    with wave.open(path, "rb") as wf:
+        return wf.getnframes() / wf.getframerate()
+
 rows = []
+skipped = 0
 with (data_dir / "metadata.csv").open(encoding="utf-8") as f:
     for line in f:
         parts = line.rstrip("\n").split("|")
         if len(parts) < 3:
             continue
         sample_id = parts[0].strip()
-        # field 2 is the normalised transcript
         text = parts[2].strip() if parts[2].strip() else parts[1].strip()
         wav = str(data_dir / "wavs" / f"{sample_id}.wav")
-        if pathlib.Path(wav).exists() and text:
-            rows.append({"id": sample_id, "target_audio": wav, "text": text})
+        if not pathlib.Path(wav).exists() or not text:
+            continue
+        if wav_duration(wav) > MAX_SECONDS:
+            skipped += 1
+            continue
+        rows.append({"id": sample_id, "target_audio": wav, "text": text})
 
 with out_path.open("w", newline="", encoding="utf-8") as f:
     w = csv.DictWriter(f, fieldnames=["id", "target_audio", "text"])
     w.writeheader()
     w.writerows(rows)
 
-print(f"Wrote {len(rows)} rows -> {out_path}")
+print(f"Wrote {len(rows)} rows (skipped {skipped} over {MAX_SECONDS}s) -> {out_path}")
 PYEOF
 else
   echo "==> Manifest already exists, skipping"
