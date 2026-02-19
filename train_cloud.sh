@@ -9,6 +9,9 @@
 #   --device DEV      (default: cuda)
 set -euo pipefail
 
+# RunPod sets this but hf_transfer isn't in our venv
+export HF_HUB_ENABLE_HF_TRANSFER=0
+
 # ── Defaults ────────────────────────────────────────────────────────────────
 EPOCHS=10
 LR=0.005
