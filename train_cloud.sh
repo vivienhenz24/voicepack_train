@@ -51,6 +51,8 @@ echo "==> uv $(uv --version)"
 cd "${REPO_DIR}"
 echo "==> Installing dependencies..."
 uv sync
+# seed pip into the venv so phonemizer (misaki dep) can call `python -m pip`
+uv pip install pip
 
 # ── 3. Download LJSpeech-1.1 ────────────────────────────────────────────────
 mkdir -p "${DATA_ROOT}"
