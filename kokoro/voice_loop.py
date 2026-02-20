@@ -242,7 +242,10 @@ def main() -> int:
     param_groups = [{"params": [pack_param], "lr": args.lr}]
     if args.lr_decoder > 0:
         param_groups.append({"params": list(pipe.model.decoder.parameters()), "lr": args.lr_decoder})
-    opt = torch.optim.Adam(param_groups)
+    # foreach=False: use single-tensor Adam kernels instead of batched _multi_tensor_adam.
+    # The batched kernel crashes with illegal memory access when the decoder parameter
+    # count is large (many tensors passed to _foreach_sqrt simultaneously).
+    opt = torch.optim.Adam(param_groups, foreach=False)
 
     history_path = out_dir / "history.jsonl"
     history_path.write_text("", encoding="utf-8")
