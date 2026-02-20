@@ -186,6 +186,10 @@ def main() -> int:
     ap.add_argument("--lr", type=float, default=0.01)
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--max-audio-seconds", type=float, default=20.0)
+    ap.add_argument("--max-grad-phonemes", type=int, default=None,
+                    help="Truncate phoneme string to this length before forward_trainable. "
+                         "Controls output audio length and thus activation memory. "
+                         "pack_index is preserved from the full string.")
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--device", default=None, help="cpu|cuda|mps")
     ap.add_argument("--val-ratio", type=float, default=0.05)
@@ -242,14 +246,28 @@ def main() -> int:
 
         for pos, i in enumerate(order, start=1):
             s = train_samples[i]
+
+            _cuda = torch.cuda.is_available()
+            if _cuda and pos % 50 == 1:
+                _alloc = torch.cuda.memory_allocated() / 1024**3
+                _reserv = torch.cuda.memory_reserved() / 1024**3
+                print(f"  [mem] step={pos} alloc={_alloc:.2f}GB reserved={_reserv:.2f}GB", flush=True)
+
             target_np = read_audio_mono_24k(s.target_audio)
             cap = int(24000 * args.max_audio_seconds)
             target = torch.from_numpy(target_np[:cap]).to(pipe.model.device)
+
+            if _cuda and pos % 50 == 1:
+                print(f"  [mem] after target load: alloc={torch.cuda.memory_allocated()/1024**3:.2f}GB  audio_samples={target.numel()}  phoneme_len={len(s.phonemes)}", flush=True)
 
             opt.zero_grad(set_to_none=True)
             ref = pack_param[s.pack_index]
             out = pipe.model.forward_trainable(s.phonemes, ref, speed=args.speed, return_output=True)
             pred = out.audio
+
+            if _cuda and pos % 50 == 1:
+                print(f"  [mem] after forward: alloc={torch.cuda.memory_allocated()/1024**3:.2f}GB  pred_samples={pred.numel()}", flush=True)
+
             n = min(pred.numel(), target.numel())
             pred_c = pred[:n]
             tgt_c = target[:n]
@@ -268,9 +286,16 @@ def main() -> int:
                 + args.w_splitnorm * splitn
             )
             loss.backward()
+
+            if _cuda and pos % 50 == 1:
+                print(f"  [mem] after backward: alloc={torch.cuda.memory_allocated()/1024**3:.2f}GB", flush=True)
+
             if args.clip_grad > 0:
                 torch.nn.utils.clip_grad_norm_([pack_param], args.clip_grad)
             opt.step()
+
+            if _cuda and pos % 50 == 1:
+                print(f"  [mem] after step: alloc={torch.cuda.memory_allocated()/1024**3:.2f}GB", flush=True)
 
             row = {
                 "epoch": epoch,
@@ -296,8 +321,6 @@ def main() -> int:
             epoch_losses["splitnorm"] += row["splitnorm"]
 
             global_step += 1
-            if global_step % 200 == 0 and torch.cuda.is_available():
-                torch.cuda.empty_cache()
             if pos % args.log_every == 0 or pos == len(order):
                 print(
                     f"epoch={epoch}/{args.epochs} sample={pos}/{len(order)} "
