@@ -320,7 +320,9 @@ class Generator(nn.Module):
             x = xs / self.num_kernels
         x = F.leaky_relu(x)
         x = self.conv_post(x)
-        spec = torch.exp(x[:,:self.post_n_fft // 2 + 1, :])
+        # Clamp before exp to prevent float32 overflow during decoder fine-tuning.
+        # exp(88) ≈ 1.7e38 which is just below float32 max; gradient is still defined.
+        spec = torch.exp(x[:,:self.post_n_fft // 2 + 1, :].clamp(max=88))
         phase = torch.sin(x[:, self.post_n_fft // 2 + 1:, :])
         return self.stft.inverse(spec, phase)
 
