@@ -278,6 +278,19 @@ def main() -> int:
             out = pipe.model.forward_trainable(s.phonemes, ref, speed=args.speed, return_output=True)
             pred = out.audio
 
+            # Skip backward for runaway-duration predictions.  The model.py cap should
+            # prevent this, but keep the guard here as a safety net.  A >3× overshoot
+            # still risks a corrupt backward even after the model-level cap.
+            _target_frames_est = float(len(target_np[:int(24000 * args.max_audio_seconds)])) / 256.0
+            _pred_frames = pred.numel() / 256.0
+            if _pred_frames > _target_frames_est * 3.0:
+                print(f"  [skip-long] pred_fr={_pred_frames:.0f} vs tgt_fr={_target_frames_est:.0f} at step={pos}, skipping backward", flush=True)
+                opt.zero_grad(set_to_none=True)
+                del out, pred
+                torch.cuda.empty_cache()
+                pos += 1
+                continue
+
             if _cuda and pos % 50 == 1:
                 print(f"  [mem] after forward: alloc={torch.cuda.memory_allocated()/1024**3:.2f}GB  pred_samples={pred.numel()}", flush=True)
 

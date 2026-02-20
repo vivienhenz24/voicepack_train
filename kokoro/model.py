@@ -116,6 +116,15 @@ class KModel(torch.nn.Module):
         duration = self.predictor.duration_proj(x)
         duration = torch.sigmoid(duration).sum(axis=-1) / speed
         pred_dur = torch.round(duration).clamp(min=1).long().squeeze()
+        # During training, cap total predicted frames so the alignment matrix and iSTFT
+        # never grow unboundedly large.  LJSpeech is capped at 10 s = ~937 frames; allow
+        # up to 1.5× that (1400 frames ≈ 14.9 s) before rescaling.  The continuous
+        # `duration` tensor is left untouched so dur_loss still pulls it toward the target.
+        if torch.is_grad_enabled():
+            total_frames = pred_dur.sum()
+            _MAX_TRAIN_FRAMES = 1400
+            if total_frames > _MAX_TRAIN_FRAMES:
+                pred_dur = (pred_dur.float() * (_MAX_TRAIN_FRAMES / total_frames.float())).round().clamp(min=1).long()
         emit_probe(
             "model.forward_with_tokens.duration",
             probe_id=probe_id,
