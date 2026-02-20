@@ -309,8 +309,21 @@ def main() -> int:
             if _cuda and pos % 50 == 1:
                 print(f"  [mem] after backward: alloc={torch.cuda.memory_allocated()/1024**3:.2f}GB", flush=True)
 
+            if args.lr_decoder > 0:
+                # Detect non-finite decoder gradients before they corrupt Adam state.
+                bad = [(n, p.grad.abs().max().item())
+                       for n, p in pipe.model.decoder.named_parameters()
+                       if p.grad is not None and not torch.isfinite(p.grad).all()]
+                if bad:
+                    print(f"  [warn] non-finite decoder grads at step={pos}: "
+                          + ", ".join(f"{n}={v:.3e}" for n, v in bad[:3]), flush=True)
+                    opt.zero_grad(set_to_none=True)
+                    continue  # skip this step entirely — bad gradients would corrupt Adam state
             if args.clip_grad > 0:
-                torch.nn.utils.clip_grad_norm_([pack_param], args.clip_grad)
+                all_params = [pack_param]
+                if args.lr_decoder > 0:
+                    all_params += list(pipe.model.decoder.parameters())
+                torch.nn.utils.clip_grad_norm_(all_params, args.clip_grad)
             opt.step()
 
             if _cuda and pos % 50 == 1:
