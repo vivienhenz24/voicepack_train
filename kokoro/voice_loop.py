@@ -359,6 +359,16 @@ def main() -> int:
             "train_splitnorm": epoch_losses["splitnorm"] / denom,
             "train_dur": epoch_losses["dur"] / denom,
         }
+
+        # Always save before validation so a crash there doesn't lose weights.
+        torch.save(pack_param.detach().cpu(), out_dir / "voice_pack_latest.pt")
+        if args.lr_decoder > 0:
+            torch.save(pipe.model.decoder.state_dict(), out_dir / "decoder_latest.pt")
+        if args.save_every_epoch:
+            torch.save(pack_param.detach().cpu(), out_dir / f"voice_pack_epoch{epoch:03d}.pt")
+            if args.lr_decoder > 0:
+                torch.save(pipe.model.decoder.state_dict(), out_dir / f"decoder_epoch{epoch:03d}.pt")
+
         val_summary = eval_dataset(
             pipe=pipe,
             pack_param=pack_param.detach(),
@@ -368,11 +378,6 @@ def main() -> int:
         )
         summary = {"epoch": epoch, **train_summary, **val_summary}
         print(json.dumps(summary, ensure_ascii=True))
-
-        if args.save_every_epoch:
-            torch.save(pack_param.detach().cpu(), out_dir / f"voice_pack_epoch{epoch:03d}.pt")
-            if args.lr_decoder > 0:
-                torch.save(pipe.model.decoder.state_dict(), out_dir / f"decoder_epoch{epoch:03d}.pt")
 
     final_pack = pack_param.detach().cpu()
     torch.save(final_pack, out_dir / "voice_pack_trained.pt")
