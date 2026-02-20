@@ -196,6 +196,7 @@ def main() -> int:
     ap.add_argument("--w-smooth", type=float, default=0.02, help="2nd-difference smoothness across rows")
     ap.add_argument("--w-splitnorm", type=float, default=0.02, help="Preserve left/right row-norm profile")
     ap.add_argument("--w-dur", type=float, default=0.05, help="Duration loss: penalise predicted total frames vs target")
+    ap.add_argument("--lr-decoder", type=float, default=0.0, help="Fine-tune decoder at this LR (0 = frozen). Use ~1e-5.")
     ap.add_argument("--log-every", type=int, default=10)
     ap.add_argument("--save-every-epoch", action="store_true")
     ap.add_argument("--out-dir", default="logs/voice_loop")
@@ -210,8 +211,12 @@ def main() -> int:
     pipe = KPipeline(lang_code=args.lang, model=True, device=args.device)
     for p in pipe.model.parameters():
         p.requires_grad = False
+    if args.lr_decoder > 0:
+        for p in pipe.model.decoder.parameters():
+            p.requires_grad = True
+        n_dec = sum(p.numel() for p in pipe.model.decoder.parameters())
+        print(f"decoder fine-tuning enabled: {n_dec:,} params at lr={args.lr_decoder}")
     # KPipeline sets eval() internally; cuDNN RNN backward requires train mode.
-    # Params are frozen so train() here won't cause weight updates.
     pipe.model.train()
 
     raw_rows = parse_manifest(args.manifest_csv)
@@ -234,7 +239,10 @@ def main() -> int:
             raise SystemExit(f"Unexpected voice pack shape: {tuple(base_pack.shape)}")
 
     pack_param = torch.nn.Parameter(base_pack.clone())
-    opt = torch.optim.Adam([pack_param], lr=args.lr)
+    param_groups = [{"params": [pack_param], "lr": args.lr}]
+    if args.lr_decoder > 0:
+        param_groups.append({"params": list(pipe.model.decoder.parameters()), "lr": args.lr_decoder})
+    opt = torch.optim.Adam(param_groups)
 
     history_path = out_dir / "history.jsonl"
     history_path.write_text("", encoding="utf-8")
@@ -363,10 +371,15 @@ def main() -> int:
 
         if args.save_every_epoch:
             torch.save(pack_param.detach().cpu(), out_dir / f"voice_pack_epoch{epoch:03d}.pt")
+            if args.lr_decoder > 0:
+                torch.save(pipe.model.decoder.state_dict(), out_dir / f"decoder_epoch{epoch:03d}.pt")
 
     final_pack = pack_param.detach().cpu()
     torch.save(final_pack, out_dir / "voice_pack_trained.pt")
     torch.save(base_pack.detach().cpu(), out_dir / "voice_pack_init.pt")
+    if args.lr_decoder > 0:
+        torch.save(pipe.model.decoder.state_dict(), out_dir / "decoder_finetuned.pt")
+        print(f"decoder={out_dir / 'decoder_finetuned.pt'}")
 
     # Quick sanity synthesis using first train sample.
     demo = train_samples[0]
@@ -380,6 +393,7 @@ def main() -> int:
         "voice_init": args.voice_init,
         "epochs": args.epochs,
         "lr": args.lr,
+        "lr_decoder": args.lr_decoder,
         "train_samples": len(train_samples),
         "val_samples": len(val_samples),
         "weights": {

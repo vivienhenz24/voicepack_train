@@ -2,8 +2,9 @@
 # train_cloud.sh — one-shot setup + training for a cloud GPU pod
 # Usage: bash train_cloud.sh [options]
 #   --epochs N        (default: 10)
-#   --lr LR           (default: 0.003)
-#   --voice-init V    (default: random)  use "random" for fresh LJ init or e.g. "af_heart"
+#   --lr LR           (default: 0.003)   voice pack learning rate
+#   --lr-decoder LR   (default: 1e-5)    decoder fine-tune LR (0 = frozen)
+#   --voice-init V    (default: random)  use "random" or e.g. "af_heart"
 #   --w-anchor W      (default: 0.0)     0 = free to move anywhere from init
 #   --w-splitnorm W   (default: 0.0)     0 = don't preserve init norm profile
 #   --w-dur W         (default: 0.1)     duration loss weight
@@ -18,6 +19,7 @@ export HF_HUB_ENABLE_HF_TRANSFER=0
 # ── Defaults ────────────────────────────────────────────────────────────────
 EPOCHS=10
 LR=0.003
+LR_DECODER=1e-5
 VOICE_INIT="random"
 W_ANCHOR=0.0
 W_SPLITNORM=0.0
@@ -32,6 +34,7 @@ while [[ $# -gt 0 ]]; do
     --epochs)     EPOCHS="$2";     shift 2 ;;
     --lr)         LR="$2";         shift 2 ;;
     --voice-init) VOICE_INIT="$2"; shift 2 ;;
+    --lr-decoder) LR_DECODER="$2"; shift 2 ;;
     --w-anchor)   W_ANCHOR="$2";   shift 2 ;;
     --w-splitnorm) W_SPLITNORM="$2"; shift 2 ;;
     --w-dur)      W_DUR="$2";      shift 2 ;;
@@ -126,7 +129,7 @@ fi
 
 # ── 5. Kick off training ─────────────────────────────────────────────────────
 echo "==> Starting voice pack training..."
-echo "    epochs=${EPOCHS}  lr=${LR}  voice_init=${VOICE_INIT}  device=${DEVICE}"
+echo "    epochs=${EPOCHS}  lr=${LR}  lr_decoder=${LR_DECODER}  voice_init=${VOICE_INIT}  device=${DEVICE}"
 echo "    w_anchor=${W_ANCHOR}  w_splitnorm=${W_SPLITNORM}  w_dur=${W_DUR}"
 echo "    out_dir=${OUT_DIR}"
 
@@ -137,6 +140,7 @@ uv run python3 kokoro/voice_loop.py \
   --voice-init    "${VOICE_INIT}" \
   --epochs        "${EPOCHS}" \
   --lr            "${LR}" \
+  --lr-decoder    "${LR_DECODER}" \
   --device        "${DEVICE}" \
   --out-dir       "${OUT_DIR}" \
   --w-anchor      "${W_ANCHOR}" \
