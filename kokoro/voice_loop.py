@@ -186,10 +186,6 @@ def main() -> int:
     ap.add_argument("--lr", type=float, default=0.01)
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--max-audio-seconds", type=float, default=20.0)
-    ap.add_argument("--max-grad-phonemes", type=int, default=None,
-                    help="Truncate phoneme string to this length before forward_trainable. "
-                         "Controls output audio length and thus activation memory. "
-                         "pack_index is preserved from the full string.")
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--device", default=None, help="cpu|cuda|mps")
     ap.add_argument("--val-ratio", type=float, default=0.05)
@@ -199,6 +195,7 @@ def main() -> int:
     ap.add_argument("--w-anchor", type=float, default=0.05, help="L2 anchor to init pack")
     ap.add_argument("--w-smooth", type=float, default=0.02, help="2nd-difference smoothness across rows")
     ap.add_argument("--w-splitnorm", type=float, default=0.02, help="Preserve left/right row-norm profile")
+    ap.add_argument("--w-dur", type=float, default=0.05, help="Duration loss: penalise predicted total frames vs target")
     ap.add_argument("--log-every", type=int, default=10)
     ap.add_argument("--save-every-epoch", action="store_true")
     ap.add_argument("--out-dir", default="logs/voice_loop")
@@ -242,7 +239,7 @@ def main() -> int:
     for epoch in range(1, args.epochs + 1):
         order = list(range(len(train_samples)))
         random.shuffle(order)
-        epoch_losses: Dict[str, float] = {"loss": 0.0, "wav": 0.0, "spec": 0.0, "anchor": 0.0, "smooth": 0.0, "splitnorm": 0.0}
+        epoch_losses: Dict[str, float] = {"loss": 0.0, "wav": 0.0, "spec": 0.0, "anchor": 0.0, "smooth": 0.0, "splitnorm": 0.0, "dur": 0.0}
 
         for pos, i in enumerate(order, start=1):
             s = train_samples[i]
@@ -277,6 +274,11 @@ def main() -> int:
             anchor = (pack_param - base_pack).pow(2).mean()
             smooth = smoothness_reg(pack_param)
             splitn = split_norm_reg(pack_param, base_pack)
+            # Duration loss: penalise predicted total frames vs target length.
+            # duration is continuous (pre-.round().long()), so gradients flow back to ref_s[:,128:].
+            # Normalised by n_phonemes so the scale is frames-per-phoneme error (~5-20 range).
+            target_frames = float(target.numel()) / 256.0
+            dur_loss = (out.duration.sum() - target_frames).abs() / out.duration.numel()
 
             loss = (
                 args.w_wav * wav_l1
@@ -284,6 +286,7 @@ def main() -> int:
                 + args.w_anchor * anchor
                 + args.w_smooth * smooth
                 + args.w_splitnorm * splitn
+                + args.w_dur * dur_loss
             )
             loss.backward()
 
@@ -308,6 +311,9 @@ def main() -> int:
                 "anchor": float(anchor.detach().cpu()),
                 "smooth": float(smooth.detach().cpu()),
                 "splitnorm": float(splitn.detach().cpu()),
+                "dur_loss": float(dur_loss.detach().cpu()),
+                "pred_frames": float(out.duration.sum().detach().cpu()),
+                "target_frames": target_frames,
             }
             with history_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(row, ensure_ascii=True))
@@ -319,12 +325,14 @@ def main() -> int:
             epoch_losses["anchor"] += row["anchor"]
             epoch_losses["smooth"] += row["smooth"]
             epoch_losses["splitnorm"] += row["splitnorm"]
+            epoch_losses["dur"] += row["dur_loss"]
 
             global_step += 1
             if pos % args.log_every == 0 or pos == len(order):
                 print(
                     f"epoch={epoch}/{args.epochs} sample={pos}/{len(order)} "
                     f"loss={row['loss']:.5f} wav={row['wav_l1']:.5f} spec={row['spec_l1']:.5f} "
+                    f"dur={row['dur_loss']:.3f} pred_fr={row['pred_frames']:.0f} tgt_fr={row['target_frames']:.0f} "
                     f"idx={s.pack_index}"
                 )
 
@@ -336,6 +344,7 @@ def main() -> int:
             "train_anchor": epoch_losses["anchor"] / denom,
             "train_smooth": epoch_losses["smooth"] / denom,
             "train_splitnorm": epoch_losses["splitnorm"] / denom,
+            "train_dur": epoch_losses["dur"] / denom,
         }
         val_summary = eval_dataset(
             pipe=pipe,
@@ -374,6 +383,7 @@ def main() -> int:
             "w_anchor": args.w_anchor,
             "w_smooth": args.w_smooth,
             "w_splitnorm": args.w_splitnorm,
+            "w_dur": args.w_dur,
         },
         "outputs": {
             "trained_pack": str(out_dir / "voice_pack_trained.pt"),

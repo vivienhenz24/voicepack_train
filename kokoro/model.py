@@ -83,6 +83,7 @@ class KModel(torch.nn.Module):
     class Output:
         audio: torch.FloatTensor
         pred_dur: Optional[torch.LongTensor] = None
+        duration: Optional[torch.FloatTensor] = None  # continuous pre-round duration, shape [1, n_phonemes]
 
     def _forward_with_tokens_impl(
         self,
@@ -90,7 +91,7 @@ class KModel(torch.nn.Module):
         ref_s: torch.FloatTensor,
         speed: float = 1,
         probe_id: Optional[str] = None,
-    ) -> tuple[torch.FloatTensor, torch.LongTensor]:
+    ) -> tuple[torch.FloatTensor, torch.LongTensor, torch.FloatTensor]:
         emit_probe(
             "model.forward_with_tokens.pre",
             probe_id=probe_id,
@@ -143,7 +144,7 @@ class KModel(torch.nn.Module):
             asr=tensor_stats(asr),
             audio=tensor_stats(audio),
         )
-        return audio, pred_dur
+        return audio, pred_dur, duration
 
     @torch.no_grad()
     def forward_with_tokens(
@@ -153,9 +154,10 @@ class KModel(torch.nn.Module):
         speed: float = 1,
         probe_id: Optional[str] = None,
     ) -> tuple[torch.FloatTensor, torch.LongTensor]:
-        return self._forward_with_tokens_impl(
+        audio, pred_dur, _ = self._forward_with_tokens_impl(
             input_ids=input_ids, ref_s=ref_s, speed=speed, probe_id=probe_id
         )
+        return audio, pred_dur
 
     def forward_with_tokens_trainable(
         self,
@@ -163,7 +165,7 @@ class KModel(torch.nn.Module):
         ref_s: torch.FloatTensor,
         speed: float = 1,
         probe_id: Optional[str] = None,
-    ) -> tuple[torch.FloatTensor, torch.LongTensor]:
+    ) -> tuple[torch.FloatTensor, torch.LongTensor, torch.FloatTensor]:
         return self._forward_with_tokens_impl(
             input_ids=input_ids, ref_s=ref_s, speed=speed, probe_id=probe_id
         )
@@ -217,7 +219,7 @@ class KModel(torch.nn.Module):
         assert len(input_ids)+2 <= self.context_length, (len(input_ids)+2, self.context_length)
         input_ids = torch.LongTensor([[0, *input_ids, 0]]).to(self.device)
         ref_s = ref_s.to(self.device)
-        audio, pred_dur = self.forward_with_tokens_trainable(input_ids, ref_s, speed, probe_id=probe_id)
+        audio, pred_dur, duration = self.forward_with_tokens_trainable(input_ids, ref_s, speed, probe_id=probe_id)
         audio = audio.squeeze()
         emit_probe(
             "model.forward_trainable.post",
@@ -227,7 +229,7 @@ class KModel(torch.nn.Module):
         )
         if return_output:
             pred_dur_out = pred_dur if pred_dur is not None else None
-            return self.Output(audio=audio, pred_dur=pred_dur_out)
+            return self.Output(audio=audio, pred_dur=pred_dur_out, duration=duration)
         return audio
 
 class KModelForONNX(torch.nn.Module):
