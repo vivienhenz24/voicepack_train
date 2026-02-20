@@ -164,7 +164,7 @@ def eval_dataset(
         for s in samples:
             target_np = read_audio_mono_24k(s.target_audio)
             cap = int(24000 * max_audio_seconds)
-            target = torch.from_numpy(target_np[:cap]).to(pipe.model.device)
+            target = torch.from_numpy(target_np[:cap])  # keep on CPU; model.forward() returns CPU
             ref = pack_param[s.pack_index]
             out = pipe.model(s.phonemes, ref, speed=speed, return_output=True)
             pred = out.audio
