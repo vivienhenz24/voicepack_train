@@ -224,9 +224,14 @@ def main() -> int:
     if not train_samples:
         raise SystemExit("No valid train samples after phonemization")
 
-    base_pack = pipe.load_voice(args.voice_init).to(pipe.model.device).detach()
-    if tuple(base_pack.shape) != (510, 1, 256):
-        raise SystemExit(f"Unexpected voice pack shape: {tuple(base_pack.shape)}")
+    if args.voice_init == "random":
+        base_pack = torch.randn(510, 1, 256, dtype=torch.float32) * 0.1
+        base_pack = base_pack.to(pipe.model.device)
+        print("voice_init=random: initialising pack from N(0, 0.1)")
+    else:
+        base_pack = pipe.load_voice(args.voice_init).to(pipe.model.device).detach()
+        if tuple(base_pack.shape) != (510, 1, 256):
+            raise SystemExit(f"Unexpected voice pack shape: {tuple(base_pack.shape)}")
 
     pack_param = torch.nn.Parameter(base_pack.clone())
     opt = torch.optim.Adam([pack_param], lr=args.lr)

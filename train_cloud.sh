@@ -2,10 +2,13 @@
 # train_cloud.sh — one-shot setup + training for a cloud GPU pod
 # Usage: bash train_cloud.sh [options]
 #   --epochs N        (default: 10)
-#   --lr LR           (default: 0.005)
-#   --voice-init V    (default: af_heart)
+#   --lr LR           (default: 0.003)
+#   --voice-init V    (default: random)  use "random" for fresh LJ init or e.g. "af_heart"
+#   --w-anchor W      (default: 0.0)     0 = free to move anywhere from init
+#   --w-splitnorm W   (default: 0.0)     0 = don't preserve init norm profile
+#   --w-dur W         (default: 0.1)     duration loss weight
 #   --lang L          (default: a)
-#   --out-dir DIR     (default: logs/voice_loop)
+#   --out-dir DIR     (default: logs/lj_voice)
 #   --device DEV      (default: cuda)
 set -euo pipefail
 
@@ -14,10 +17,13 @@ export HF_HUB_ENABLE_HF_TRANSFER=0
 
 # ── Defaults ────────────────────────────────────────────────────────────────
 EPOCHS=10
-LR=0.005
-VOICE_INIT="af_heart"
+LR=0.003
+VOICE_INIT="random"
+W_ANCHOR=0.0
+W_SPLITNORM=0.0
+W_DUR=0.1
 LANG="a"
-OUT_DIR="logs/voice_loop"
+OUT_DIR="logs/lj_voice"
 DEVICE="cuda"
 
 # ── CLI args ─────────────────────────────────────────────────────────────────
@@ -26,6 +32,9 @@ while [[ $# -gt 0 ]]; do
     --epochs)     EPOCHS="$2";     shift 2 ;;
     --lr)         LR="$2";         shift 2 ;;
     --voice-init) VOICE_INIT="$2"; shift 2 ;;
+    --w-anchor)   W_ANCHOR="$2";   shift 2 ;;
+    --w-splitnorm) W_SPLITNORM="$2"; shift 2 ;;
+    --w-dur)      W_DUR="$2";      shift 2 ;;
     --lang)       LANG="$2";       shift 2 ;;
     --out-dir)    OUT_DIR="$2";    shift 2 ;;
     --device)     DEVICE="$2";     shift 2 ;;
@@ -118,19 +127,23 @@ fi
 # ── 5. Kick off training ─────────────────────────────────────────────────────
 echo "==> Starting voice pack training..."
 echo "    epochs=${EPOCHS}  lr=${LR}  voice_init=${VOICE_INIT}  device=${DEVICE}"
+echo "    w_anchor=${W_ANCHOR}  w_splitnorm=${W_SPLITNORM}  w_dur=${W_DUR}"
 echo "    out_dir=${OUT_DIR}"
 
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 uv run python3 kokoro/voice_loop.py \
-  --manifest-csv "${MANIFEST}" \
-  --lang         "${LANG}" \
-  --voice-init   "${VOICE_INIT}" \
-  --epochs       "${EPOCHS}" \
-  --lr           "${LR}" \
-  --device       "${DEVICE}" \
-  --out-dir      "${OUT_DIR}" \
+  --manifest-csv  "${MANIFEST}" \
+  --lang          "${LANG}" \
+  --voice-init    "${VOICE_INIT}" \
+  --epochs        "${EPOCHS}" \
+  --lr            "${LR}" \
+  --device        "${DEVICE}" \
+  --out-dir       "${OUT_DIR}" \
+  --w-anchor      "${W_ANCHOR}" \
+  --w-splitnorm   "${W_SPLITNORM}" \
+  --w-dur         "${W_DUR}" \
   --save-every-epoch \
-  --log-every    50
+  --log-every     50
 
 echo ""
 echo "==> Done! Trained pack: ${OUT_DIR}/voice_pack_trained.pt"
