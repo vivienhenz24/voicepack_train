@@ -288,7 +288,6 @@ def main() -> int:
                 opt.zero_grad(set_to_none=True)
                 del out, pred
                 torch.cuda.empty_cache()
-                pos += 1
                 continue
 
             if _cuda and pos % 50 == 1:

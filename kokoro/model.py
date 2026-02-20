@@ -122,7 +122,7 @@ class KModel(torch.nn.Module):
         # `duration` tensor is left untouched so dur_loss still pulls it toward the target.
         if torch.is_grad_enabled():
             total_frames = pred_dur.sum()
-            _MAX_TRAIN_FRAMES = 1400
+            _MAX_TRAIN_FRAMES = 950  # LJSpeech capped at 10 s ≈ 937 frames; allow 1% headroom
             if total_frames > _MAX_TRAIN_FRAMES:
                 pred_dur = (pred_dur.float() * (_MAX_TRAIN_FRAMES / total_frames.float())).round().clamp(min=1).long()
         emit_probe(

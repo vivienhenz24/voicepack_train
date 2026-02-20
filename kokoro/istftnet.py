@@ -320,9 +320,11 @@ class Generator(nn.Module):
             x = xs / self.num_kernels
         x = F.leaky_relu(x)
         x = self.conv_post(x)
-        # Clamp before exp to prevent float32 overflow during decoder fine-tuning.
-        # exp(88) ≈ 1.7e38 which is just below float32 max; gradient is still defined.
-        spec = torch.exp(x[:,:self.post_n_fft // 2 + 1, :].clamp(max=88))
+        # Clamp before exp so the gradient through exp stays bounded.
+        # exp(88) ≈ 1.7e38 is technically finite but the chain-rule product
+        # exp(x)*upstream can still overflow float32 during decoder fine-tuning.
+        # exp(10) ≈ 22026 keeps all intermediate gradient magnitudes safe.
+        spec = torch.exp(x[:,:self.post_n_fft // 2 + 1, :].clamp(max=10))
         phase = torch.sin(x[:, self.post_n_fft // 2 + 1:, :])
         return self.stft.inverse(spec, phase)
 
